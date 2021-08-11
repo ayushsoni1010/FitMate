@@ -1,5 +1,7 @@
 package com.acash.fitmate.activities
 
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -13,20 +15,24 @@ import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
+import androidx.work.*
 import com.acash.fitmate.R
-import com.acash.fitmate.fragments.YourPostsFragment
 import com.acash.fitmate.fragments.HomeFragment
 import com.acash.fitmate.fragments.MyPartnersFragment
+import com.acash.fitmate.fragments.YourPostsFragment
 import com.acash.fitmate.models.User
+import com.acash.fitmate.workers.NotificationWorker
 import com.bumptech.glide.Glide
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationView
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.navigation_header.*
 import kotlinx.android.synthetic.main.navigation_header.view.*
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelectedListener,
     DrawerLayout.DrawerListener {
@@ -37,6 +43,12 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
     private val auth by lazy {
         FirebaseAuth.getInstance()
     }
+
+    private val realtimeDatabase by lazy {
+        FirebaseDatabase.getInstance("https://fitmate-f33d2-default-rtdb.asia-southeast1.firebasedatabase.app/")
+    }
+
+    private val userStatusCollection = realtimeDatabase.reference.child("user_status/${auth.uid}")
 
     private var fragmentToSet: Fragment = HomeFragment()
     private var wantToChangeFragment = false
@@ -76,6 +88,24 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         navigation_view.setNavigationItemSelectedListener(this)
 
         drawer_layout.addDrawerListener(this)
+
+        initNotificationWorker()
+    }
+
+    private fun initNotificationWorker() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val notificationWork = PeriodicWorkRequestBuilder<NotificationWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(constraints)
+            .build()
+
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "Notifications",
+            ExistingPeriodicWorkPolicy.KEEP,
+            notificationWork
+        )
     }
 
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
@@ -153,6 +183,10 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
                 "Cancel"
             ) {
                 auth.signOut()
+                val nm: NotificationManager =
+                    getSystemService(Service.NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancelAll()
+
                 startActivity(
                     Intent(this, AuthActivity::class.java)
                         .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -184,6 +218,12 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             else -> super.onBackPressed()
 
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        userStatusCollection.setValue(true)
+        userStatusCollection.onDisconnect().removeValue()
     }
 
     //Used to set Fragments which are also present as an option in the Navigation drawer
